@@ -5,7 +5,7 @@ A Dynamic Simulation Framework for Mobile Ad Hoc  Networks in Search and Rescue 
 This repository contains the  implementation of a modular Search-and-Rescue (SAR) MANET simulation framework developed in ns-3.
 
 The framework is released to support reproducibility of the results reported in(please cite):
-
+Ghanem, M., Sabaliauskaite, G., Correia-Hopkins, S., Jones, J. L., & Micallef, N. (2026). A dynamic simulation framework for mobile ad hoc networks in search and rescue operations. Simulation Modelling Practice and Theory, 103281.
 ## Scope of this Release
 This code corresponds to the framework and includes:
 - Core SAR scenario setup
