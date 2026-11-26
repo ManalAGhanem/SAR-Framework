@@ -6,37 +6,37 @@ void InitializeCivilianSafetyStatus(const NodeContainer& civilianNodes) {
         civilianSafetyStatus[civilianId] = false; // Initially, no civilian is safe
     }
 }
-// void LogRescueStatus(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> baseNode, const std::string& status) {
-//     double timestamp = Simulator::Now().GetSeconds();
+void LogRescueStatus(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> baseNode, const std::string& status) {
+    double timestamp = Simulator::Now().GetSeconds();
 
-//     // Get positions of SAR, civilian, and base nodes
-//     Vector sarPosition = sarNode->GetObject<MobilityModel>()->GetPosition();
-//     Vector civilianPosition = civilianNode->GetObject<MobilityModel>()->GetPosition();
-//     Vector basePosition = baseNode->GetObject<MobilityModel>()->GetPosition();
+    // Get positions of SAR, civilian, and base nodes
+    Vector sarPosition = sarNode->GetObject<MobilityModel>()->GetPosition();
+    Vector civilianPosition = civilianNode->GetObject<MobilityModel>()->GetPosition();
+    Vector basePosition = baseNode->GetObject<MobilityModel>()->GetPosition();
 
     // Calculate distance to the base station
-    // double sarDistanceToBase = std::sqrt(
-    //     std::pow(sarPosition.x - basePosition.x, 2) +
-    //     std::pow(sarPosition.y - basePosition.y, 2) +
-    //     std::pow(sarPosition.z - basePosition.z, 2)
-    // );
+    double sarDistanceToBase = std::sqrt(
+        std::pow(sarPosition.x - basePosition.x, 2) +
+        std::pow(sarPosition.y - basePosition.y, 2) +
+        std::pow(sarPosition.z - basePosition.z, 2)
+    );
 
-    //  double CivilianDistanceToBase = std::sqrt(
-    //     std::pow(civilianPosition.x - basePosition.x, 2) +
-    //     std::pow(civilianPosition.y - basePosition.y, 2) +
-    //     std::pow(civilianPosition.z - basePosition.z, 2)
-    // );
+     double CivilianDistanceToBase = std::sqrt(
+        std::pow(civilianPosition.x - basePosition.x, 2) +
+        std::pow(civilianPosition.y - basePosition.y, 2) +
+        std::pow(civilianPosition.z - basePosition.z, 2)
+    );
     // Unified log entry for rescue status
-    // rescueCompletionLogFile << timestamp << "," 
-    //                         << sarNode->GetId() << "," 
-    //                         << civilianNode->GetId() << ","
-    //                         << sarPosition.x << "," << sarPosition.y << "," << sarPosition.z << ","
-    //                         << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z << ","
-    //                         << sarDistanceToBase << ","  // Log distance to base station
-    //                          << CivilianDistanceToBase << ","  // Log distance to base station
-    //                         << basePosition.x << "," << basePosition.y << "," << basePosition.z << ","
-    //                         << status << "\n";
-    // rescueCompletionLogFile.flush();
+    rescueCompletionLogFile << timestamp << "," 
+                            << sarNode->GetId() << "," 
+                            << civilianNode->GetId() << ","
+                            << sarPosition.x << "," << sarPosition.y << "," << sarPosition.z << ","
+                            << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z << ","
+                            << sarDistanceToBase << ","  // Log distance to base station
+                             << CivilianDistanceToBase << ","  // Log distance to base station
+                            << basePosition.x << "," << basePosition.y << "," << basePosition.z << ","
+                            << status << "\n";
+    rescueCompletionLogFile.flush();
 
     // Log info with distance to base
     //NS_LOG_INFO("SAR Node " << sarNode->GetId() 
@@ -45,22 +45,15 @@ void InitializeCivilianSafetyStatus(const NodeContainer& civilianNodes) {
                 //  << sarPosition.x << "," << sarPosition.y << "," << sarPosition.z 
                 //  << "), Civilian(" << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z 
                 //  << "). Distance to Base: " << sarDistanceToBase << " meters.");
-//}
-struct SafeStatus {
-        uint32_t sarNodeId;
-        uint32_t civilianId;
-        char status[16]; // "Safe"
-        double timestamp;
-        double sarX, sarY, sarZ;
-        double civilianX, civilianY, civilianZ;
-    } ;
+}
+
 void MarkCivilianAsSafe(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> baseNode)
 {
     uint8_t tos = 0x60;
 
     const uint32_t civilianId = civilianNode->GetId();
 
-    // ✅ 1. Fast early-out before any allocations or logging
+    //  1. Fast early-out before any allocations or logging
     auto itSafe = civilianSafetyStatus.find(civilianId);
     if (itSafe != civilianSafetyStatus.end() && itSafe->second) {
         return;
@@ -72,10 +65,10 @@ void MarkCivilianAsSafe(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> bas
 
     const uint32_t safetyCommIdBase = 50000;
 
-    // ✅ 2. Log status once
-   // LogRescueStatus(sarNode, civilianNode, baseNode, "Safe");
+    //  2. Log status once
+    LogRescueStatus(sarNode, civilianNode, baseNode, "Safe");
 
-    // ✅ 3. Get base station IP once
+    //  3. Get base station IP once
     Ptr<Ipv4> baseIpv4 = baseNode->GetObject<Ipv4>();
     if (!baseIpv4) {
         NS_LOG_ERROR("Base node has no Ipv4 object!");
@@ -83,7 +76,7 @@ void MarkCivilianAsSafe(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> bas
     }
     Ipv4Address baseStationIp = baseIpv4->GetAddress(1, 0).GetLocal();
 
-    // ✅ 4. Prepare payload once
+    //  4. Prepare payload once
     const double timestamp = Simulator::Now().GetSeconds();
     Ptr<MobilityModel> sarMob = sarNode->GetObject<MobilityModel>();
     Ptr<MobilityModel> civMob = civilianNode->GetObject<MobilityModel>();
@@ -96,7 +89,14 @@ void MarkCivilianAsSafe(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> bas
     Vector sarPosition      = sarMob->GetPosition();
     Vector civilianPosition = civMob->GetPosition();
 
-    SafeStatus info = {
+    struct SafeStatus {
+        uint32_t sarNodeId;
+        uint32_t civilianId;
+        char status[16];
+        double timestamp;
+        double sarX, sarY, sarZ;
+        double civilianX, civilianY, civilianZ;
+    } safeStatus = {
         sarNode->GetId(),
         civilianNode->GetId(),
         "Safe",
@@ -105,43 +105,55 @@ void MarkCivilianAsSafe(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> bas
         civilianPosition.x, civilianPosition.y, civilianPosition.z
     };
 
-    // ✅ 5. Create ONE unicast socket on the base for this wave of sends
-    Ptr<Socket> unicastSocket = Socket::CreateSocket(baseNode, UdpSocketFactory::GetTypeId());
-     unicastSocket->SetIpTos(tos);
-   // Ptr<Socket> unicastSocket =GetCachedUdpSocket(baseNode, tos);
+    //  5. Create ONE unicast socket on the base for this wave of sends
 
-    
-    //unicastSocket->Bind(InetSocketAddress(baseStationIp, CivilianSafePort));
+    Ptr<Socket> unicastSocket =GetCachedUdpSocket(baseNode, tos);
 
-    // ✅ 6. Fan-out to other SAR nodes
+
+    //  6. Fan-out to other SAR nodes
     for (uint32_t i = 0; i < sarNodes.GetN(); ++i) {
-    Ptr<Node> targetSarNode = sarNodes.Get(i);
-    if (targetSarNode->GetId() == sarNode->GetId()) continue;
+        Ptr<Node> targetSarNode = sarNodes.Get(i);
+        if (targetSarNode->GetId() == sarNode->GetId()) {
+            continue; // skip sender
+        }
 
-    Ptr<Ipv4> targetIpv4 = targetSarNode->GetObject<Ipv4>();
-    if (!targetIpv4) continue;
+        Ptr<Ipv4> targetIpv4 = targetSarNode->GetObject<Ipv4>();
+        if (!targetIpv4) {
+            NS_LOG_WARN("No Ipv4 object for Node " << targetSarNode->GetId());
+            continue;
+        }
 
-    Ipv4Address targetIp = targetIpv4->GetAddress(1, 0).GetLocal();
-    uint32_t individualCommId = safetyCommIdBase + i;
+        Ipv4Address targetIp = targetIpv4->GetAddress(1, 0).GetLocal();
 
-    // Start session outside the lambda so it's recorded immediately
-    StartCommunicationSession(individualCommId, baseStationIp, targetIp, 
-                               "Status Update", Simulator::Now().GetSeconds(), "UDP", CivilianSafePort);
+        // Unique communication ID for this particular target SAR node
+        uint32_t individualCommId = safetyCommIdBase + i;
 
-    Ptr<Packet> packet = Create<Packet>((uint8_t*)&info, sizeof(info));
-    uint32_t packetId = packet->GetUid();
-    
-    // Track timestamp for delay calcs later
-    sendTimestamps[packetId] = Simulator::Now().GetSeconds();
+        StartCommunicationSession(
+            individualCommId,
+            baseStationIp,             // Source IP
+            targetIp,                  // Destination IP
+            "Civilian Safety Status Update",
+            Simulator::Now().GetSeconds(),
+            "UDP",
+            CivilianSafePort
+        );
 
-    // Tags
-    packet->AddPacketTag(NodeIdTag(unicastSocket->GetNode()->GetId()));
-    packet->AddPacketTag(CommunicationIdTag(individualCommId));
+        Ptr<Packet> packet = Create<Packet>((uint8_t*)&safeStatus, sizeof(safeStatus));
 
-    Time staggeredDelay = MicroSeconds(i * 150 + (rand() % 100)); 
+        uint32_t packetId = packet->GetUid();
+        double sendTime   = Simulator::Now().GetSeconds();
 
-    // ✅ CAPTURED packetId so it's available inside the lambda
-    Simulator::Schedule(staggeredDelay, [unicastSocket, packet, targetIp, individualCommId, baseStationIp, packetId]() {
+        // ⚠ If you do not absolutely need per-packet delay for these,
+        // you can comment out the next line to avoid map growth:
+        sendTimestamps[packetId] = sendTime;
+
+        NodeIdTag tag;
+        tag.SetNodeId(unicastSocket->GetNode()->GetId());
+        packet->AddPacketTag(tag);
+
+        CommunicationIdTag commIdTag(individualCommId);
+        packet->AddPacketTag(commIdTag);
+
         InetSocketAddress remote(targetIp, CivilianSafePort);
         unicastSocket->SendTo(packet, 0, remote);
 
@@ -149,85 +161,18 @@ void MarkCivilianAsSafe(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> bas
             unicastSocket,
             baseStationIp,
             targetIp,
-            packetId,        // Now valid!
+            packetId,
             0.0,             
             0.0,             
             packet->GetSize(),
             CivilianSafePort,
             "Civilian safety status sent",
-            individualCommId,
-            "TX"
+            individualCommId,"TX"
         );
-    });
-}
-    // for (uint32_t i = 0; i < sarNodes.GetN(); ++i) {
-    //     Ptr<Node> targetSarNode = sarNodes.Get(i);
-    //     if (targetSarNode->GetId() == sarNode->GetId()) {
-    //         continue; // skip sender
-    //     }
+    }
 
-    //     Ptr<Ipv4> targetIpv4 = targetSarNode->GetObject<Ipv4>();
-    //     if (!targetIpv4) {
-    //         NS_LOG_WARN("No Ipv4 object for Node " << targetSarNode->GetId());
-    //         continue;
-    //     }
 
-    //     Ipv4Address targetIp = targetIpv4->GetAddress(1, 0).GetLocal();
-
-    //     // Unique communication ID for this particular target SAR node
-    //     uint32_t individualCommId = safetyCommIdBase + i;
-
-    //     StartCommunicationSession(
-    //         individualCommId,
-    //         baseStationIp,             // Source IP
-    //         targetIp,                  // Destination IP
-    //         "Civilian Safety Status Update",
-    //         Simulator::Now().GetSeconds(),
-    //         "UDP",
-    //         CivilianSafePort
-    //     );
-
-    //     Ptr<Packet> packet = Create<Packet>((uint8_t*)&safeStatus, sizeof(safeStatus));
-
-    //     uint32_t packetId = packet->GetUid();
-    //     double sendTime   = Simulator::Now().GetSeconds();
-
-    //     // ⚠ If you do not absolutely need per-packet delay for these,
-    //     // you can comment out the next line to avoid map growth:
-    //     sendTimestamps[packetId] = sendTime;
-
-    //     NodeIdTag tag;
-    //     tag.SetNodeId(unicastSocket->GetNode()->GetId());
-    //     packet->AddPacketTag(tag);
-
-    //     CommunicationIdTag commIdTag(individualCommId);
-    //     packet->AddPacketTag(commIdTag);
-
-    //     InetSocketAddress remote(targetIp, CivilianSafePort);
-
-    //     Time staggeredDelay = MicroSeconds(i * 150 + (rand() % 100)); 
-
-    // Simulator::Schedule(staggeredDelay, [unicastSocket, packet, targetIp, individualCommId, baseStationIp]() {
-    //     InetSocketAddress remote(targetIp, CivilianSafePort);
-    //     unicastSocket->SendTo(packet, 0, remote);
-
-    //     LogPacketEvent(
-    //         unicastSocket,
-    //         baseStationIp,
-    //         targetIp,
-    //         packetId,
-    //         0.0,             // delay filled on receiver, if used
-    //         0.0,             // throughput, if used
-    //         packet->GetSize(),
-    //         CivilianSafePort,
-    //         "Civilian safety status sent",
-    //         individualCommId,"TX"
-    //     );});
-    // }
-
-   // unicastSocket->Close();
-
-    // ✅ 7. Clean up assignment & tracking maps (this is already good!)
+    //  7. Clean up assignment & tracking maps (this is already good!)
     const uint32_t sarId = sarNode->GetId();
     assignedSarNodes.erase(sarId);
     rescueAssignments.erase(civilianId);
@@ -238,36 +183,7 @@ void MarkCivilianAsSafe(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> bas
     g_civilianToSarNodeMap.erase(sarId);
 
 
-    //     assignedSarNodes.erase(sarNode->GetId());
-    // sarToCivilianOffset.erase(sarNode->GetId());
-    // sarPreviousPositions[sarNode->GetId()].clear();
-    // trackedConvergencePositions[sarNode->GetId()].clear();
-    // g_civilianToSarNodeMap.erase(sarNode->GetId());
-
-    // ✅ 8. Clean discovery state for this civilian
-
-    // This assumes discoveryState is: civilianId -> { sarId -> bool }
-    // discoveryState.erase(civilianId);
-    // g_civilianToDiscoveringNodeIps.erase(civilianId);
-    // g_civilianToDiscoveringNodesCount.erase(civilianId);
-    // g_civilianToEventIdMap.erase(civilianId);
-
-    // If discoveryState is SAR -> {civilian -> bool}, then do NOT erase above outer key,
-    // only the loop below.
-
-    // for (auto &entry : discoveryState) {
-    //     entry.second.erase(civilianId);
-    // }
-
-    // for (auto it = lastLoggedPosition.begin(); it != lastLoggedPosition.end(); ) {
-    //     if (it->first.second == civilianId) {
-    //         it = lastLoggedPosition.erase(it);
-    //     } else {
-    //         ++it;
-    //     }
-    // }
-
-    // ✅ 9. Debug print + reassign pending civilians
+    //  8. Debug print + reassign pending civilians
     std::cout << "[PENDING @ " << Simulator::Now().GetSeconds() << "] "
               << "count=" << pendingCivilians.size() << " | ";
 
@@ -276,10 +192,11 @@ void MarkCivilianAsSafe(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Node> bas
     }
     std::cout << std::endl;
 
+    // Finish this rescue before processing the next pending assignment.
+    // ScheduleNow preserves the simulation timestamp without nesting calls.
     Simulator::ScheduleNow(&TryAssignPendingCivilians);
 }
-   
-struct MovementUpdate {
+        struct MovementUpdate {
         uint32_t sarNodeId;
         uint32_t civilianId;
         double timestamp;
@@ -296,9 +213,7 @@ void MoveTowardBaseStation(
         Ptr<Socket> broadcastSocket, 
         uint16_t rescuemovmentport )
  {
-        // ------------------------------------------------
         // 1) Initialize movement communication ID
-        // ------------------------------------------------
         uint8_t tos = 0x60;
        
         uint32_t movementCommId = 40000 + sarNode->GetId(); 
@@ -317,16 +232,12 @@ void MoveTowardBaseStation(
             rescuemovmentport
         );
     
-        // ------------------------------------------------
         // 2) Get current positions
-        // ------------------------------------------------
         Vector sarPosition      = sarNode->GetObject<MobilityModel>()->GetPosition();
         Vector basePosition     = baseNode->GetObject<MobilityModel>()->GetPosition();
         Vector civilianPosition = civilianNode->GetObject<MobilityModel>()->GetPosition();
     
-        // ------------------------------------------------
         // 3) Store the initial offset between SAR & Civilian (only once)
-        // ------------------------------------------------
         if (sarToCivilianOffset.find(sarNode->GetId()) == sarToCivilianOffset.end()) {
             sarToCivilianOffset[sarNode->GetId()] = civilianPosition - sarPosition;
         }
@@ -336,7 +247,7 @@ void MoveTowardBaseStation(
             sarPreviousPositions[sarNode->GetId()] = {};
         }
     
-        //   Start tracking movement only from the first step of rescue
+        //  F Start tracking movement only from the first step of rescue
         auto &hist = sarPreviousPositions[sarNode->GetId()];
         hist.push_back(sarPosition);
 
@@ -347,18 +258,11 @@ void MoveTowardBaseStation(
         }
 
 
-        // if (sarPreviousPositions[sarNode->GetId()].empty()) {
-        //     sarPreviousPositions[sarNode->GetId()].push_back(sarPosition);
-        // }
-        //sarPreviousPositions[sarNode->GetId()].push_back(sarPosition);
-    
         // Compute the distance to the base station
         double sarDistanceToBase      = ::CalculateDistance(sarPosition, basePosition, true);
         double civilianDistanceToBase = ::CalculateDistance(civilianPosition, basePosition, true);
     
-        // ------------------------------------------------
         // 4) Check if they have reached the base
-        // ------------------------------------------------
         if (sarDistanceToBase <= sarProxmitytoBase &&
             civilianDistanceToBase <= civilianProxmitytoBase) 
         {
@@ -382,9 +286,7 @@ void MoveTowardBaseStation(
             return; 
         }
     
-        // ------------------------------------------------
         // 5) Compute movement direction (shared movement)
-        // ------------------------------------------------
         Vector moveDirection = {
             basePosition.x - sarPosition.x,
             basePosition.y - sarPosition.y,
@@ -411,9 +313,7 @@ void MoveTowardBaseStation(
             std::max(sarPosition.z + moveDirection.z * stepSize, minZ)
         };
     
-        // ------------------------------------------------
         // 6) Move Civilian to Maintain Fixed Offset
-        // ------------------------------------------------
         Ptr<MobilityModel> sarMobility = sarNode->GetObject<MobilityModel>();
         Ptr<MobilityModel> civilianMobility = civilianNode->GetObject<MobilityModel>();
     
@@ -424,21 +324,16 @@ void MoveTowardBaseStation(
         sarMobility->SetPosition(newSarPosition);
         civilianMobility->SetPosition(newCivilianPosition);
     
-        // ------------------------------------------------
         // 7) Compute new distances after movement
-        // ------------------------------------------------
         double newSarDistanceToBase      = ::CalculateDistance(newSarPosition, basePosition, true);
         double newCivilianDistanceToBase = ::CalculateDistance(newCivilianPosition, basePosition, true);
         double distanceBetweenSARAndCivilian = ::CalculateDistance(newSarPosition, newCivilianPosition, true);
-         Ptr<Socket> movementSocket = Socket::CreateSocket(sarNode, UdpSocketFactory::GetTypeId());
-         movementSocket->SetIpTos(tos);  //assign ToS to socket
-         //   Ptr<Socket> movementSocket =GetCachedUdpSocket(sarNode, tos);
+            Ptr<Socket> movementSocket =GetCachedUdpSocket(sarNode, tos);
 
         InetSocketAddress remote = InetSocketAddress(baseStationIp, rescuemovmentport);
-       // movementSocket->Connect(remote);
     
         std::ostringstream msg;
-    msg << "MovementUpdate,"
+        msg << "MovementUpdate,"
         << Simulator::Now().GetSeconds()  // Timestamp
         << ",SAR " << sarNode->GetId()
         << ",Position=(" << newSarPosition.x << "," << newSarPosition.y << "," << newSarPosition.z << ")"
@@ -463,24 +358,13 @@ void MoveTowardBaseStation(
         NodeIdTag tag;
         tag.SetNodeId(sarNode->GetId());
         packet->AddPacketTag(tag);
-        //Ptr<Packet> packet = Create<Packet>((uint8_t*) msg.str().c_str(), msg.str().length());
-        
-     // movementSocket->SendTo(packet, 0, remote);
-     Time txDelay = MicroSeconds(4); // or MicroSeconds(1) + JitterMs(1.0)
-
-// schedule the send (captures by value)
-Simulator::Schedule(txDelay, [movementSocket, packet, remote]() {
-  movementSocket->SendTo(packet, 0, remote);
-});
-
-
-        //movementSocket->Send(packet);
+        movementSocket->SendTo(packet, 0, remote);
         // Store updated civilian distances in a global map
-    g_civilianLatestDistanceToBase[civilianNode->GetId()] = newCivilianDistanceToBase;
+        g_civilianLatestDistanceToBase[civilianNode->GetId()] = newCivilianDistanceToBase;
     
 
-    const uint32_t pktSize = packet->GetSize();
-   const uint32_t pktId   = packet->GetUid();
+       const uint32_t pktSize = packet->GetSize();
+       const uint32_t pktId   = packet->GetUid();
 
         // Throughput at TX is not meaningful here unless you define it.
         LogPacketEvent(
@@ -488,8 +372,8 @@ Simulator::Schedule(txDelay, [movementSocket, packet, remote]() {
             sarNodeIp,
             baseStationIp,
             pktId,
-            0.0,            // delay unknown at TX
-            0.0,            // throughput unknown at TX
+            0.0,           
+            0.0,            
             pktSize,
             rescuemovmentport,
             "SAR Move to safety Update Sent",
@@ -501,9 +385,7 @@ Simulator::Schedule(txDelay, [movementSocket, packet, remote]() {
     
         // NS_LOG_INFO("📤 Sent Movement Update from SAR " << sarNode->GetId() 
         //              << " to Base Station at " << Simulator::Now().GetSeconds() << "s.");
-        // ------------------------------------------------
         // 8) Log movement step-by-step
-        // ------------------------------------------------
         std::cout << "[STEP LOG] Time=" << Simulator::Now().GetSeconds() << "s, "
                   << "SAR Node " << sarNode->GetId()
                   << " -> (" << newSarPosition.x << ", " << newSarPosition.y << ", " << newSarPosition.z << "); "
@@ -515,29 +397,25 @@ Simulator::Schedule(txDelay, [movementSocket, packet, remote]() {
                   << std::endl;
     
         // Log to file
-        // movementLogFile << Simulator::Now().GetSeconds() << ","
-        //                 << "Movement Update Sent"
-        //                 << "SAR Node " << sarNode->GetId() << "," << newSarPosition.x << "," 
-        //                 << newSarPosition.y << "," 
-        //                 << newSarPosition.z << ","
-        //                 << "Civilian Node " << civilianNode->GetId() << "," << newCivilianPosition.x << "," 
-        //                 << newCivilianPosition.y << "," 
-        //                 << newCivilianPosition.z << "," 
-        //                 << "DistToBase," << newSarDistanceToBase
-        //                 << "\n";
-        // movementLogFile.flush();
+        movementLogFile << Simulator::Now().GetSeconds() << ","
+                        << "Movement Update Sent"
+                        << "SAR Node " << sarNode->GetId() << "," << newSarPosition.x << "," 
+                        << newSarPosition.y << "," 
+                        << newSarPosition.z << ","
+                        << "Civilian Node " << civilianNode->GetId() << "," << newCivilianPosition.x << "," 
+                        << newCivilianPosition.y << "," 
+                        << newCivilianPosition.z << "," 
+                        << "DistToBase," << newSarDistanceToBase
+                        << "\n";
+        movementLogFile.flush();
     
-        // ------------------------------------------------
         // 9) Schedule the next movement step
-        // ------------------------------------------------
-        Simulator::Schedule(Seconds(1.0)+ JitterMs(7.0), &MoveTowardBaseStation,
+        Simulator::Schedule(Seconds(1.0), &MoveTowardBaseStation,
                             sarNode, civilianNode, baseNode,
                             broadcastSocket, rescuemovmentport);
     }
  
 void LogResucerMovmentUpdate(Ptr<Socket> socket) {
- //   Address from;
-
     Address from;
     Ptr<Packet> packet;
     while ((packet = socket->RecvFrom(from))) {
@@ -561,29 +439,16 @@ void LogResucerMovmentUpdate(Ptr<Socket> socket) {
     // Retrieve sender's address
     InetSocketAddress senderAddress = InetSocketAddress::ConvertFrom(from);
     Ipv4Address senderIp = senderAddress.GetIpv4();
-    // uint32_t packetId = packet->GetUid();
-    // double receiveTime = Simulator::Now().GetSeconds();
-
-    
-
-    // Log the update
-  //  double currentTime = Simulator::Now().GetSeconds();
-
-       // Calculate delay:
-    // double delay = 0.0;
-    // if (sendTimestamps.count(packetId) > 0) {
-    //     delay = receiveTime - sendTimestamps[packetId];
-    // }
-    double delay = 0.0;
+     double delay = 0.0;
     auto itTs = sendTimestamps.find(packetId);
     if (itTs != sendTimestamps.end())
     {
         delay = receiveTime - itTs->second;
-        sendTimestamps.erase(itTs); // ✅ critical
+        sendTimestamps.erase(itTs); //  critical
     }
 
     double throughput = 0.0;
-if (delay > 1e-9) { throughput = (packet->GetSize() * 8.0) / delay;}
+    if (delay > 1e-9) { throughput = (packet->GetSize() * 8.0) / delay;}
 
     // Then call LogPacketEvent again, but now filling in the actual delay & throughput
     LogPacketEvent(
@@ -600,195 +465,97 @@ if (delay > 1e-9) { throughput = (packet->GetSize() * 8.0) / delay;}
     );
 
    
-      // ✅ Log movement data for analysis (SAR & Civilian)
-        //     movementLogFile << receiveTime << ","
-        //     << "Movement update Received,"
-        //     <<senderIp<<","
-        //     << receivedUpdate.sarX << "," << receivedUpdate.sarY << "," << receivedUpdate.sarZ << ","
-        //     << "Civilian " << receivedUpdate.civilianId << ","
+      //  Log movement data for analysis (SAR & Civilian)
+            movementLogFile << receiveTime << ","
+            << "Movement update Received,"
+            <<senderIp<<","
+            << receivedUpdate.sarX << "," << receivedUpdate.sarY << "," << receivedUpdate.sarZ << ","
+            << "Civilian " << receivedUpdate.civilianId << ","
 
-        //     << receivedUpdate.civilianX << "," << receivedUpdate.civilianY << "," << receivedUpdate.civilianZ
-        //     << receivedUpdate.distanceToBase <<","
-        //     <<","
-        //     << "\n";
+            << receivedUpdate.civilianX << "," << receivedUpdate.civilianY << "," << receivedUpdate.civilianZ
+            << receivedUpdate.distanceToBase <<","
+            <<","
+            << "\n";
 
        
-        // movementLogFile.flush();
+        movementLogFile.flush();
 
     //NS_LOG_INFO("Base Station received movement update: Rescuer Node " << receivedUpdate.sarNodeId
                 //  << " Civilian Node " << receivedUpdate.civilianId
                 //  << " Position (" << receivedUpdate.sarX << ", " << receivedUpdate.sarY << ", " << receivedUpdate.sarZ
                 //  << "), Distance to Base: " << receivedUpdate.distanceToBase);
 }}
+
 void HandleSafetyBroadcast(Ptr<Socket> socket) {
     Address from;
     Ptr<Packet> packet;
 
     while ((packet = socket->RecvFrom(from))) {
-        // 1. IMMEDIATE NULL CHECK
         if (!packet) {
             NS_LOG_ERROR("Received null packet");
-            continue; 
+            continue;
         }
 
-        //   std::cout << "[RX_HANDLER] t=" << Simulator::Now().GetSeconds()
-        //   << " node=" << socket->GetNode()->GetId()
-        //   << " handler=HANDLESAFETY" << std::endl;
+        uint32_t packetId    = packet->GetUid();
+        double   receiveTime = Simulator::Now().GetSeconds();
 
-        uint32_t packetId = packet->GetUid();
-        double receiveTime = Simulator::Now().GetSeconds();
-
-        // 2. Decode the SafeStatus Struct
-        // Ensure the packet is large enough to contain our struct
-        if (packet->GetSize() >= sizeof(SafeStatus)) {
-            SafeStatus receivedStatus;
-            packet->CopyData(reinterpret_cast<uint8_t*>(&receivedStatus), sizeof(SafeStatus));
-            
-            uint32_t civId = receivedStatus.civilianId;
-            civilianSafetyStatus[civId] = true; 
-            
-            NS_LOG_INFO("Node " << socket->GetNode()->GetId() << " updated: Civilian " << civId << " is now SAFE.");
-        } else {
-            NS_LOG_WARN("Received packet too small for SafeStatus struct. Size: " << packet->GetSize());
-        }
-
-        // 3. Extract Communication ID Tag
+        // Get Communication ID tag (optional)
         CommunicationIdTag commIdTag;
         uint32_t commId = 0;
         if (packet->PeekPacketTag(commIdTag)) {
             commId = commIdTag.GetCommunicationId();
+        } else {
+            NS_LOG_WARN("CommunicationIdTag not found in packet");
         }
 
-        // 4. Calculate Delay & Throughput
+       
+        //Use iterator so we don't do double lookup or accidentally insert
         double delay = 0.0;
-        double throughput = 0.0;
-        
         auto it = sendTimestamps.find(packetId);
         if (it != sendTimestamps.end()) {
             delay = receiveTime - it->second;
-            
-            if (delay > 0.0) {
-                throughput = (packet->GetSize() * 8.0) / delay; 
-            }
-            
-            // CRITICAL: Cleanup memory
+
+            // We’re done with this packetId → free memory
             sendTimestamps.erase(it);
+        } else {
+            NS_LOG_WARN("Packet ID " << packetId << " not found in sendTimestamps");
         }
 
-        // 5. Logging
+        // Log event with updated delay and throughput
         Ptr<Ipv4> localIpv4 = socket->GetNode()->GetObject<Ipv4>();
-        if (localIpv4) {
-            Ipv4Address dstIp = localIpv4->GetAddress(1, 0).GetLocal();
-            Ipv4Address srcIp = InetSocketAddress::ConvertFrom(from).GetIpv4();
-
-            LogPacketEvent(
-                socket,
-                dstIp,
-                srcIp,
-                packetId,
-                delay,
-                throughput,
-                packet->GetSize(),
-                CivilianSafePort,
-                "Civilian safety broadcast received",
-                commId,
-                "RX"
-            );
+        if (!localIpv4) {
+            NS_LOG_ERROR("No Ipv4 on node receiving safety broadcast");
+            continue;
         }
+
+        Ipv4Address dstIp = localIpv4->GetAddress(1, 0).GetLocal();
+        Ipv4Address srcIp = InetSocketAddress::ConvertFrom(from).GetIpv4();
+
+        double throughput = 0.0;
+        if (delay > 0.0) {
+            throughput = (packet->GetSize() * 8.0) / delay;  // bits per second
+        }
+
+        LogPacketEvent(
+            socket,
+            dstIp,          
+            srcIp,         
+            packetId,
+            delay,
+            throughput,
+            packet->GetSize(),
+            CivilianSafePort,
+            "Civilian safety broadcast received",
+            commId,"RX"
+        );
     }
 }
-// void HandleSafetyBroadcast(Ptr<Socket> socket) {
-//     Address from;
-//     Ptr<Packet> packet;
-
-
-//     while ((packet = socket->RecvFrom(from))) {
-//         SafeStatus receivedStatus;
-//         if (packet->GetSize() >= sizeof(SafeStatus)) {
-//             packet->CopyData(reinterpret_cast<uint8_t*>(&receivedStatus), sizeof(SafeStatus));
-            
-//             // Now you can act on the specific civilian ID
-//             uint32_t civId = receivedStatus.civilianId;
-//             civilianSafetyStatus[civId] = true; 
-            
-//             NS_LOG_INFO("Node " << socket->GetNode()->GetId() << " updated: Civilian " << civId << " is now SAFE.");
-//         }
-//         if (!packet) {
-//             NS_LOG_ERROR("Received null packet");
-//             continue;
-//         }
-
-//         uint32_t packetId    = packet->GetUid();
-//         double   receiveTime = Simulator::Now().GetSeconds();
-
-//         // Get Communication ID tag (optional)
-//         CommunicationIdTag commIdTag;
-//         uint32_t commId = 0;
-//         if (packet->PeekPacketTag(commIdTag)) {
-//             commId = commIdTag.GetCommunicationId();
-//         } else {
-//             NS_LOG_WARN("CommunicationIdTag not found in packet");
-//         }
-
-//         // ⚠ Note: you originally sent a struct SafeStatus, not a single byte.
-//         // If you only care about "is safe", this is probably fine, but you're
-//         // just reading the first byte of that struct here.
-//         // SafeStatus safeStatus;
-//         // if (packet->GetSize() >= sizeof(SafeStatus)) {
-//         //     packet->CopyData(reinterpret_cast<uint8_t*>(&safeStatus), sizeof(SafeStatus));
-//         //     // use safeStatus.status, safeStatus.civilianId, etc. if desired
-//         // } else {
-//         //     NS_LOG_WARN("Packet size is smaller than expected for SafeStatus");
-//         // }
-
-//         // 🔹 Use iterator so we don't do double lookup or accidentally insert
-//         double delay = 0.0;
-//         auto it = sendTimestamps.find(packetId);
-//         if (it != sendTimestamps.end()) {
-//             delay = receiveTime - it->second;
-
-//             // We’re done with this packetId → free memory
-//             sendTimestamps.erase(it);
-//         } else {
-//             NS_LOG_WARN("Packet ID " << packetId << " not found in sendTimestamps");
-//         }
-
-//         // Log event with updated delay and throughput
-//         Ptr<Ipv4> localIpv4 = socket->GetNode()->GetObject<Ipv4>();
-//         if (!localIpv4) {
-//             NS_LOG_ERROR("No Ipv4 on node receiving safety broadcast");
-//             continue;
-//         }
-
-//         Ipv4Address dstIp = localIpv4->GetAddress(1, 0).GetLocal();
-//         Ipv4Address srcIp = InetSocketAddress::ConvertFrom(from).GetIpv4();
-
-//         double throughput = 0.0;
-//         if (delay > 0.0) {
-//             throughput = (packet->GetSize() * 8.0) / delay;  // bits per second
-//         }
-
-//         LogPacketEvent(
-//             socket,
-//             dstIp,          // Destination IP (this node)
-//             srcIp,          // Source IP (sender)
-//             packetId,
-//             delay,
-//             throughput,
-//             packet->GetSize(),
-//             CivilianSafePort,
-//             "Civilian safety broadcast received",
-//             commId,"RX"
-//         );
-//     }
-// }
 
 
 void CheckAllCiviliansSafe(const NodeContainer& droneNodes,
     const NodeContainer& vehicleNodes,
     const NodeContainer& footNodes,
-    const NodeContainer& helicopterNodes,
-    Ptr<WeatherManager> weatherManager) {  
+    const NodeContainer& helicopterNodes) {  
     uint32_t safeCount = 0;
     uint32_t totalCivilians = civilianSafetyStatus.size();
     Vector basePosition = GetBaseStationPosition(); // Get dynamic base station position
@@ -867,17 +634,7 @@ void CheckAllCiviliansSafe(const NodeContainer& droneNodes,
                                         g_civilianLatestDistanceToBase[civilianId] :  
                                         CalculateDistance(civilianPos, basePosition, true);
     
-                //  Check if civilian has been discovered via `g_discoveryConvergenceEvents`
-                // bool isDiscovered = false;
-                // std::vector<uint32_t> discoveringNodes;
-                // for (const auto& event : g_discoveryConvergenceEvents) {
-                //     if (event.civilianId == civilianId) {
-                //         isDiscovered = true;
-                //         discoveringNodes = event.discoveringNodeIds; // Store discovering SARs
-                //         break;
-                //     }
-                // }
-                bool isDiscovered = false;
+                 bool isDiscovered = false;
                 std::vector<uint32_t> discoveringNodes;
 
                 auto it = g_civilianToEventIdMap.find(civilianId);
@@ -907,9 +664,7 @@ void CheckAllCiviliansSafe(const NodeContainer& droneNodes,
                           << " | Distance to Base: " << distanceToBase << "m"
                           << discoveryStatus.str() << std::endl;
     
-                // ---------------------------------------------
                 //  Now Calculate Distance to Each SAR Node
-                // ---------------------------------------------
                 double minDistance = std::numeric_limits<double>::max(); // Track closest SAR node
                 uint32_t closestSarId = std::numeric_limits<uint32_t>::max(); // Set to the maximum possible value
     
@@ -926,12 +681,11 @@ void CheckAllCiviliansSafe(const NodeContainer& droneNodes,
                     }
                 }
     
-                //  Print the closest SAR node distance
                 //  Print the closest SAR node distance + thermal & discovery range
             if (closestSarId != std::numeric_limits<uint32_t>::max()) {
                 Ptr<Node> closestSarNode = NodeList::GetNode(closestSarId);
                 double thermalRange = GetThermalImagingRange(closestSarNode, droneNodes, vehicleNodes, footNodes, helicopterNodes);
-                double losRange = GetDiscoveryRadius(closestSarNode, droneNodes, vehicleNodes, footNodes, helicopterNodes, weatherManager);
+                double losRange = GetDiscoveryRadius(closestSarNode, droneNodes, vehicleNodes, footNodes, helicopterNodes);
 
                 std::cout << "   🔍 Closest SAR Node: " << closestSarId 
                         << " | Distance: " << minDistance << "m"
@@ -951,8 +705,7 @@ void CheckAllCiviliansSafe(const NodeContainer& droneNodes,
     //  If all civilians are safe, order SAR nodes to return
     if (safeCount == totalCivilians) {
         NS_LOG_INFO(" All civilians are safe! Ordering SAR units to return to base...");
-        //OrderSarNodesToReturn();
-        //Simulator::Schedule(Seconds(10.0), &CheckSarNodesAtBase);
+    
 
        Simulator::Stop();
 
@@ -960,5 +713,5 @@ void CheckAllCiviliansSafe(const NodeContainer& droneNodes,
     }
 
     //  Recheck in 1 second
-    Simulator::Schedule(Seconds(1.0)+ JitterMs(2.0), &CheckAllCiviliansSafe, droneNodes,vehicleNodes, footNodes, helicopterNodes,weatherManager);
+    Simulator::Schedule(Seconds(1.0), &CheckAllCiviliansSafe, droneNodes,vehicleNodes, footNodes, helicopterNodes);
 }
