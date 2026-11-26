@@ -12,22 +12,25 @@ void BroadcastAttachmentStatus(uint32_t sarNodeId,
     uint8_t tos=0x60;
 
     // The sender node (SAR node that became attached)
-    Ptr<Node> senderNode = allSarNodes.Get(sarNodeId);
-    if (!senderNode) {
-        NS_LOG_ERROR("SAR node with ID=" << sarNodeId << " not found in the NodeContainer.");
-        return;
-    }
+        Ptr<Node> senderNode = allSarNodes.Get(sarNodeId);
+        if (!senderNode) {
+            NS_LOG_ERROR("SAR node with ID=" << sarNodeId << " not found in the NodeContainer.");
+            return;
+        }
 
-    // Sender's IP address
-    Ptr<Ipv4> senderIpv4 = senderNode->GetObject<Ipv4>();
-    if (!senderIpv4) {
-        NS_LOG_ERROR("No Ipv4 object for SAR node " << sarNodeId);
-        return;
-    }
+        // Sender's IP address
+        Ptr<Ipv4> senderIpv4 = senderNode->GetObject<Ipv4>();
+        if (!senderIpv4) {
+            NS_LOG_ERROR("No Ipv4 object for SAR node " << sarNodeId);
+            return;
+        }
     Ipv4Address senderIp = senderIpv4->GetAddress(1, 0).GetLocal();
 
     // Create socket on the sender node
-    Ptr<Socket> socket =GetCachedUdpSocket(senderNode, tos);
+    Ptr<Socket> socket = Socket::CreateSocket(senderNode, UdpSocketFactory::GetTypeId());
+            socket->SetIpTos(tos);
+
+    //Ptr<Socket> socket =GetCachedUdpSocket(senderNode, tos);
     // Prepare the payload for the broadcast
     struct AttachmentBroadcastData {
         uint32_t sarNodeId;
@@ -89,8 +92,11 @@ void BroadcastAttachmentStatus(uint32_t sarNodeId,
         NodeIdTag tag;
         tag.SetNodeId(sarNodeId);
         packet->AddPacketTag(tag);
+        //socket->SendTo(packet, 0, remote);
+        Time staggeredDelay = MilliSeconds(i * 1.0);
+     Simulator::Schedule(staggeredDelay, [socket, packet, recvIp, broadcastPort, senderIp, packetId, sendattachCommId]() {
+        InetSocketAddress remote(recvIp, broadcastPort);
         socket->SendTo(packet, 0, remote);
-
         // Log the event
         LogPacketEvent(
             socket,
@@ -103,30 +109,31 @@ void BroadcastAttachmentStatus(uint32_t sarNodeId,
             broadcastPort,
             "Attachment Broadcast Sent",
             sendattachCommId,"TX"
-        );
+        );});
 
         // Log the broadcast to the attachment log file
-        attachmentLogFile << sendTime << ",Broadcast," << sarNodeId << ","
-                          << civilianId << ","
-                          << "Unicast to Node " << receiverNode->GetId() << "\n";
-        attachmentLogFile.flush();
+        // attachmentLogFile << sendTime << ",Broadcast," << sarNodeId << ","
+        //                   << civilianId << ","
+        //                   << "Unicast to Node " << receiverNode->GetId() << "\n";
+        // attachmentLogFile.flush();
     }
 
-   
+    // Close the socket after broadcasting to all nodes
+   // socket->Close();
 }
 
-void LogAttachment(uint32_t sarNodeId, uint32_t civilianId, Vector sarPosition, Vector civilianPosition, double timestamp) {
-    attachmentLogFile << timestamp << ",Attachment," << sarNodeId << ","
-                  << sarPosition.x << "," << sarPosition.y << "," << sarPosition.z << ","
-                  << civilianId << "," << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z
-                  << ",\n"; 
-attachmentLogFile.flush();
+// void LogAttachment(uint32_t sarNodeId, uint32_t civilianId, Vector sarPosition, Vector civilianPosition, double timestamp) {
+//     attachmentLogFile << timestamp << ",Attachment," << sarNodeId << ","
+//                   << sarPosition.x << "," << sarPosition.y << "," << sarPosition.z << ","
+//                   << civilianId << "," << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z
+//                   << ",\n"; // Empty Details for Attachment
+// attachmentLogFile.flush();
 
 
-    std::cout << "Attachment Log: SAR Node " << sarNodeId
-              << " attached to Civilian " << civilianId
-              << " at time " << timestamp << "\n";
-}
+//     std::cout << "Attachment Log: SAR Node " << sarNodeId
+//               << " attached to Civilian " << civilianId
+//               << " at time " << timestamp << "\n";
+// }
 
 void MoveTowardBaseStation(
         Ptr<Node> sarNode, 
@@ -138,6 +145,28 @@ void MoveTowardBaseStation(
         
 void ConvergeOnCivilian(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Socket> baseSocket, uint16_t port) {
     // Calculate the distance between SAR node and civilian node
+
+    uint32_t civId = civilianNode->GetId();
+    uint32_t sarId = sarNode->GetId();
+
+    
+
+    auto it = g_civilianAttachedState.find(civId);
+    if (it != g_civilianAttachedState.end() && it->second)
+    {
+        // Civilian already attached -> convergence loop should stop
+        return;
+    }
+
+    // GUARD 1: If someone else already attached, stop this SAR node's loop
+    if (g_civilianAttachedState.count(civId) && g_civilianAttachedState[civId]) {
+        // Only continue if *this* specific SAR is the one that attached
+        if (g_civilianToSarNodeMap.count(sarId) && g_civilianToSarNodeMap[sarId] == civId) {
+            // This SAR is the rescuer; but it should already be in MoveTowardBaseStation.
+            return; 
+        }
+        return; 
+    }
     Vector civilianPosition = civilianNode->GetObject<MobilityModel>()->GetPosition();
     Vector sarPosition = sarNode->GetObject<MobilityModel>()->GetPosition();
     Vector basePosition = g_baseNode->GetObject<MobilityModel>()->GetPosition();
@@ -187,12 +216,12 @@ void ConvergeOnCivilian(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Socket> b
 
     // Log convergence progress
     double timestamp = Simulator::Now().GetSeconds();
-    convergenceLogFile << timestamp << "," <<sarNodeIp<<","<< sarNode->GetId() << "," << civilianNode->GetId() << ","
-                       << sarPosition.x << "," << sarPosition.y << "," << sarPosition.z << ","
-                       << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z << ","
-                       << basePosition.x << "," << basePosition.y << "," << basePosition.z << ","
-                       << distance << ","<< distanceToBase  << "," << status << "\n";
-    convergenceLogFile.flush();
+    // convergenceLogFile << timestamp << "," <<sarNodeIp<<","<< sarNode->GetId() << "," << civilianNode->GetId() << ","
+    //                    << sarPosition.x << "," << sarPosition.y << "," << sarPosition.z << ","
+    //                    << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z << ","
+    //                    << basePosition.x << "," << basePosition.y << "," << basePosition.z << ","
+    //                    << distance << ","<< distanceToBase  << "," << status << "\n";
+    // convergenceLogFile.flush();
 
     std::cout << " SAR NODE " <<sarNode->GetId()<<" CONVERGING ON "<<civilianNode->GetId()<< " DISTANCE TILL ATTACHMENT "<< distance<< std::endl;
 
@@ -201,6 +230,7 @@ void ConvergeOnCivilian(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Socket> b
     if (trackedConvergencePositions.find(sarNode->GetId()) == trackedConvergencePositions.end()) {
         trackedConvergencePositions[sarNode->GetId()] = {};
     }
+   // trackedConvergencePositions[sarNode->GetId()].push_back(sarPosition);
 
    auto &hist = trackedConvergencePositions[sarNode->GetId()];
     hist.push_back(sarPosition);
@@ -216,11 +246,27 @@ void ConvergeOnCivilian(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Socket> b
     if (status == "Attached") {
        // NS_LOG_INFO("SAR Node " << sarNode->GetId() << " has attached to Civilian " << civilianNode->GetId());
         g_civilianAttachedState[civilianNode->GetId()] = true; // Mark as attached
-        g_civilianToSarNodeMap[sarNode->GetId()] = civilianNode->GetId();
+        //g_civilianToSarNodeMap[sarNode->GetId()] = civilianNode->GetId();
 
+       // uint32_t sarId = sarNode->GetId();
+        uint32_t civId = civilianNode->GetId();
+
+        // If this SAR is already assigned to this civilian, DO NOT start Move twice
+        auto itMap = g_civilianToSarNodeMap.find(sarId);
+        if (itMap != g_civilianToSarNodeMap.end())
+        {
+            // Already mapped - movement already started (or should have started)
+            // Stop here to avoid starting another loop
+            return;
+        }
+
+            // Mark mapping FIRST, then start movement
+            g_civilianToSarNodeMap[sarId] = civId;
+            // MoveTowardBaseStation(...);
+            // return;
 
         // Log the attachment
-        LogAttachment(sarNode->GetId(), civilianNode->GetId(), sarPosition, civilianPosition, timestamp);
+       // LogAttachment(sarNode->GetId(), civilianNode->GetId(), sarPosition, civilianPosition, timestamp);
 
         // Broadcast attachment status to other SAR nodes
         BroadcastAttachmentStatus(sarNode->GetId(), civilianNode->GetId(), allSarNodes, broadcastPort);
@@ -245,17 +291,20 @@ void ConvergeOnCivilian(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Socket> b
         }
 
         // Create a socket for SAR node's movement toward the base station
-           uint8_t tos=0x60;
+          // uint8_t tos=0x60;
 
-        Ptr<Socket> movSarSocket =GetCachedUdpSocket(sarNode, tos);
+       // Ptr<Socket> movSarSocket =GetCachedUdpSocket(sarNode, tos);
 
-        //Ptr<Socket> movSarSocket = Socket::CreateSocket(sarNode, UdpSocketFactory::GetTypeId());
+        Ptr<Socket> movSarSocket = Socket::CreateSocket(sarNode, UdpSocketFactory::GetTypeId());
         if (!movSarSocket) {
             NS_FATAL_ERROR("Failed to create socket for SAR Node " << sarNode->GetId());
         }
+     //   movSarSocket->Bind(); // Bind the SAR node socket to a random available port
 
         // Start moving the SAR node and the civilian toward the base station
-        MoveTowardBaseStation(sarNode, civilianNode, g_baseNode, movSarSocket, rescuemovmentport);
+        Simulator::Schedule(MilliSeconds(1), &MoveTowardBaseStation,
+                    sarNode, civilianNode, g_baseNode, movSarSocket, rescuemovmentport);
+        //MoveTowardBaseStation(sarNode, civilianNode, g_baseNode, movSarSocket, rescuemovmentport);
             
         return; // Stop further convergence
     }
@@ -282,7 +331,7 @@ void ConvergeOnCivilian(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Socket> b
     });
 
     // Schedule the next movement step toward the civilian
-    Simulator::Schedule(Seconds(1.0), &ConvergeOnCivilian, sarNode, civilianNode, baseSocket, port);
+    Simulator::Schedule(Seconds(1.0)+ JitterMs(5.0), &ConvergeOnCivilian, sarNode, civilianNode, baseSocket, port);
 
     // Send status update to the base station
    
@@ -327,7 +376,7 @@ void ConvergeOnCivilian(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Socket> b
         sarNodeIp, 
         baseStationIp,
         packetId,
-        0.0, 
+        0.0, // Delay to be calculated on the receive side
         0.0,
         packet->GetSize(),
         port,
@@ -335,64 +384,60 @@ void ConvergeOnCivilian(Ptr<Node> sarNode, Ptr<Node> civilianNode, Ptr<Socket> b
         convergenceCommId,"TX"
     );
 }
+static bool IsCivilianAlreadySafeForAssignment(uint32_t civilianId)
+{
+    const auto it = civilianSafetyStatus.find(civilianId);
+    return it != civilianSafetyStatus.end() && it->second;
+}
 
+// Remove a queued civilian at assignment commit, before convergence can
+// synchronously complete the rescue and remove its active assignment.
+static void CompletePendingAssignment(uint32_t civilianId)
+{
+    if (pendingCivilians.erase(civilianId) != 0)
+    {
+        pendingAssignmentCsv << Simulator::Now().GetSeconds() << ","
+                             << civilianId << ",ASSIGNED\n";
+        pendingAssignmentCsv.flush();
+    }
+}
 
 void AssignRescuer(uint32_t civilianId, Ptr<Node> civilianNode, const NodeContainer& sarNodes, 
-    Ptr<Socket> baseBroadcastSocket, uint16_t assignmentPort) {
-
-        std::cout << "[AssignRescuer] called for civilian=" << civilianId
-          << " time=" << Simulator::Now().GetSeconds()
-          << " stream_open=" << rescueAssignmentLogFile.is_open()
-          << " fail=" << rescueAssignmentLogFile.fail()
-          << "\n";
-
-// 1) If civilian is already assigned, exit.
-if (rescueAssignments.find(civilianId) != rescueAssignments.end()) {
-return;
-}
+                  Ptr<Socket> baseBroadcastSocket, uint16_t assignmentPort) 
+{
+    // Never assign a safe civilian or duplicate an active assignment.
+    if (IsCivilianAlreadySafeForAssignment(civilianId) ||
+        rescueAssignments.find(civilianId) != rescueAssignments.end()) {
+        pendingCivilians.erase(civilianId);
+        return;
+    }
   
-// 2) Validate the civilian node
-if (!civilianNode) {
-NS_LOG_ERROR("Civilian Node is null for ID " << civilianId);
-return;
-}
+    // 2) Validate the civilian node
+    if (!civilianNode) {
+        NS_LOG_ERROR("Civilian Node is null for ID " << civilianId);
+        return;
+    }
 
-uint8_t tos = 0x60 ;
+    uint8_t tos = 0x60;
 
-// 3) Retrieve the mobility model for the civilian
-Ptr<MobilityModel> civilianMobility = civilianNode->GetObject<MobilityModel>();
-if (!civilianMobility) {
-NS_LOG_ERROR("No MobilityModel found for Civilian Node " << civilianId);
-return;
-}
+    // 3) Retrieve the mobility model for the civilian
+    Ptr<MobilityModel> civilianMobility = civilianNode->GetObject<MobilityModel>();
+    if (!civilianMobility) {
+        NS_LOG_ERROR("No MobilityModel found for Civilian Node " << civilianId);
+        return;
+    }
 
-// 4) Find the closest SAR node to the civilian
-Vector civilianPosition = civilianMobility->GetPosition();
-double minDistance = std::numeric_limits<double>::max();
-uint32_t assignedNodeId = 0;
-Ptr<Node> assignedNode = nullptr;
-
-// Base-assigned: Select the closest SAR node
+    // 4) Find the closest available SAR node
+    Vector civilianPosition = civilianMobility->GetPosition();
+    double minDistance = std::numeric_limits<double>::max();
+    uint32_t assignedNodeId = 0;
+    Ptr<Node> assignedNode = nullptr;
 
     for (uint32_t i = 0; i < sarNodes.GetN(); ++i) {
         Ptr<Node> sarNode = sarNodes.Get(i);
-        if (!sarNode) continue;
+        if (!sarNode || assignedSarNodes.find(sarNode->GetId()) != assignedSarNodes.end()) continue;
+        if (IsDroneOrHelicopter(sarNode)) continue;
 
-        // Skip nodes already assigned
-        if (assignedSarNodes.find(sarNode->GetId()) != assignedSarNodes.end()) {
-            continue;
-        }
-
-        // Skip drones and helicopters
-        if (IsDroneOrHelicopter(sarNode)) {
-            continue;
-        }
-
-        // Check the mobility model of the SAR node
-        Ptr<MobilityModel> sarMobility = sarNode->GetObject<MobilityModel>();
-        if (!sarMobility) continue;
-
-        // Calculate the distance to the civilian
         double distance = CalculateDistance(civilianNode, sarNode, true);
         if (distance < minDistance) {
             minDistance = distance;
@@ -401,152 +446,305 @@ Ptr<Node> assignedNode = nullptr;
         }
     }
 
-// 5) Ensure a suitable rescuer was found
-if (!assignedNode) {
-    NS_LOG_WARN("All SARs busy. Civilian " << civilianId << " queued for later assignment.");
-    pendingCivilians.insert(civilianId);
-    return;
+    // 5) Queue if no rescuer found
+    if (!assignedNode) {
+        NS_LOG_WARN("All SARs busy. Civilian " << civilianId << " queued.");
+        pendingCivilians.insert(civilianId);
+        return;
+    }
+
+    // 6) Record the assignment
+    rescueAssignments[civilianId] = assignedNodeId;
+    assignedSarNodes.insert(assignedNodeId);
+    CompletePendingAssignment(civilianId);
+
+    // 7) Fan-out Broadcast with Staggered Delays
+    // We capture necessary variables by value [=] to ensure they exist when the delay expires
+    Ipv4Address baseAddress = baseBroadcastSocket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+
+    for (uint32_t i = 0; i < sarNodes.GetN(); ++i) {
+        Ptr<Node> sarNode = sarNodes.Get(i);
+        if (!sarNode) continue;
+
+        // Prepare packet data immediately
+        RescueAssignmentData assignmentData = {civilianId, assignedNodeId, 
+                                               civilianPosition.x, civilianPosition.y, civilianPosition.z};
+        Ptr<Packet> packet = Create<Packet>((uint8_t*)&assignmentData, sizeof(assignmentData));
+        
+        uint32_t communicationId = 20000 + sarNode->GetId();
+        packet->AddPacketTag(CommunicationIdTag(communicationId));
+        packet->AddPacketTag(NodeIdTag(baseBroadcastSocket->GetNode()->GetId()));
+
+        Ipv4Address receiverAddress = sarNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+        uint32_t packetId = packet->GetUid();
+        
+        // Track timestamp for delay calcs
+        sendTimestamps[packetId] = Simulator::Now().GetSeconds();
+
+        // 🔹 STAGGERED DELAY: 200 microseconds per node to prevent PHY collisions
+        Time staggeredDelay = MilliSeconds(i * 1.0);
+
+        Simulator::Schedule(staggeredDelay, [=]() {
+            baseBroadcastSocket->SetIpTos(tos);
+            InetSocketAddress remote(receiverAddress, assignmentPort);
+            baseBroadcastSocket->SendTo(packet, 0, remote);
+
+            StartCommunicationSession(
+                communicationId, baseAddress, receiverAddress,
+                "Rescue Assignment Broadcast", Simulator::Now().GetSeconds(),
+                "UDP", assignmentPort
+            );
+
+            LogPacketEvent(
+                baseBroadcastSocket, baseAddress, receiverAddress,
+                packetId, 0.0, 0.0, packet->GetSize(),
+                assignmentPort, "Rescue Assignment Packet Broadcast SENT",
+                communicationId, "TX"
+            );
+        });
+    }
+
+    // 8) Initialize Rescuer Movement
+Ptr<Socket> senderSocket = Socket::CreateSocket(assignedNode, UdpSocketFactory::GetTypeId());
+
+    if (!senderSocket) {
+        NS_LOG_ERROR("Failed to create sender socket for SAR Node " << assignedNodeId);
+        return;
+    }
+
+    // Schedule convergence slightly after the broadcast starts
+    Simulator::Schedule(MilliSeconds(3), &ConvergeOnCivilian,
+                        assignedNode, civilianNode, senderSocket, convergencePort);
 }
 
+// void AssignRescuer(uint32_t civilianId, Ptr<Node> civilianNode, const NodeContainer& sarNodes, 
+//     Ptr<Socket> baseBroadcastSocket, uint16_t assignmentPort) {
 
-// 6) Record the assignment
-rescueAssignments[civilianId] = assignedNodeId;
-assignedSarNodes.insert(assignedNodeId);
+//         // std::cout << "[AssignRescuer] called for civilian=" << civilianId
+//         //   << " time=" << Simulator::Now().GetSeconds()
+//         //   << " stream_open=" << rescueAssignmentLogFile.is_open()
+//         //   << " fail=" << rescueAssignmentLogFile.fail()
+//         //   << "\n";
 
-// 7) Log the assignment
-double timestamp = Simulator::Now().GetSeconds();
-Ipv4Address rescuerIp = assignedNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
-// std::cout << "[AssignRescuer] &rescueAssignmentLogFile=" << (void*)&rescueAssignmentLogFile
-//           << " is_open=" << rescueAssignmentLogFile.is_open()
-//           << " fail=" << rescueAssignmentLogFile.fail()
-//           << "\n";
+// // 1) If civilian is already assigned, exit.
+// if (rescueAssignments.find(civilianId) != rescueAssignments.end()) {
+// return;
+// }
+  
+// // 2) Validate the civilian node
+// if (!civilianNode) {
+// NS_LOG_ERROR("Civilian Node is null for ID " << civilianId);
+// return;
+// }
 
-        //   std::cout << "[OPEN] rescue addr=" << (void*)&rescueAssignmentLogFile
-        //   << " recv addr=" << (void*)&receivedAssignmentsLogFile << "\n";
+// uint8_t tos = 0x60 ;
 
+// // 3) Retrieve the mobility model for the civilian
+// Ptr<MobilityModel> civilianMobility = civilianNode->GetObject<MobilityModel>();
+// if (!civilianMobility) {
+// NS_LOG_ERROR("No MobilityModel found for Civilian Node " << civilianId);
+// return;
+// }
 
+// // 4) Find the closest SAR node to the civilian
+// Vector civilianPosition = civilianMobility->GetPosition();
+// double minDistance = std::numeric_limits<double>::max();
+// uint32_t assignedNodeId = 0;
+// Ptr<Node> assignedNode = nullptr;
 
-rescueAssignmentLogFile << timestamp << "," << civilianId << "," << assignedNodeId << "( BASE ASSIGNMENET),"
-             << rescuerIp << "," // Include rescuer's IP address
-             << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z << "\n";
-rescueAssignmentLogFile.flush();
+// // Base-assigned: Select the closest SAR node
 
+//     for (uint32_t i = 0; i < sarNodes.GetN(); ++i) {
+//         Ptr<Node> sarNode = sarNodes.Get(i);
+//         if (!sarNode) continue;
 
+//         // Skip nodes already assigned
+//         if (assignedSarNodes.find(sarNode->GetId()) != assignedSarNodes.end()) {
+//             continue;
+//         }
 
-// If this assignment was triggered by the base, broadcast the assignment.
+//         // Skip drones and helicopters
+//         if (IsDroneOrHelicopter(sarNode)) {
+//             continue;
+//         }
 
-for (uint32_t i = 0; i < sarNodes.GetN(); ++i) {
-Ptr<Node> sarNode = sarNodes.Get(i);
-if (!sarNode) continue;
+//         // Check the mobility model of the SAR node
+//         Ptr<MobilityModel> sarMobility = sarNode->GetObject<MobilityModel>();
+//         if (!sarMobility) continue;
 
-// Create a new assignment packet for each SAR node
-RescueAssignmentData assignmentData = {civilianId, assignedNodeId, 
-                                    civilianPosition.x, civilianPosition.y, civilianPosition.z};
-Ptr<Packet> packet = Create<Packet>((uint8_t*)&assignmentData, sizeof(assignmentData));
+//         // Calculate the distance to the civilian
+//         double distance = CalculateDistance(civilianNode, sarNode, true);
+//         if (distance < minDistance) {
+//             minDistance = distance;
+//             assignedNodeId = sarNode->GetId();
+//             assignedNode = sarNode;
+//         }
+//     }
 
-// Generate a unique communication ID for each SAR node
-uint32_t communicationId = 20000 + sarNode->GetId();
-CommunicationIdTag commIdTag(communicationId);
-packet->AddPacketTag(commIdTag);
-
-// Send the packet to the current SAR node
-Ipv4Address receiverAddress = sarNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
-baseBroadcastSocket->SetIpTos(tos);
-InetSocketAddress remote = InetSocketAddress(receiverAddress, assignmentPort);
-NodeIdTag tag;
-tag.SetNodeId(baseBroadcastSocket->GetNode()->GetId());
-packet->AddPacketTag(tag);
-baseBroadcastSocket->SendTo(packet, 0, remote);
-
-// Start a communication session for the current SAR node
-StartCommunicationSession(
- communicationId,
- baseBroadcastSocket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal(),
- receiverAddress,
- "Rescue Assignment Broadcast",
- Simulator::Now().GetSeconds(),
- "UDP",
- assignmentPort
-);
-
-// Log packet event for the current SAR node
-uint32_t packetId = packet->GetUid();
-double sendTime = Simulator::Now().GetSeconds();
-sendTimestamps[packetId] = sendTime;
-
-LogPacketEvent(
- baseBroadcastSocket,
- baseBroadcastSocket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal(),
- receiverAddress,
- packetId,
- 0.0,
- 0.0,
- packet->GetSize(),
- assignmentPort,
- "Rescue Assignment Packet Broadcast SENT",
- communicationId,"TX"
-);
-}
+// // 5) Ensure a suitable rescuer was found
+// if (!assignedNode) {
+//     NS_LOG_WARN("All SARs busy. Civilian " << civilianId << " queued for later assignment.");
+//     pendingCivilians.insert(civilianId);
+//     return;
+// }
 
 
-// 8) Create a sender socket for the assigned node
-    Ptr<Socket> senderSocket =GetCachedUdpSocket(assignedNode, tos);
+// // 6) Record the assignment
+// rescueAssignments[civilianId] = assignedNodeId;
+// assignedSarNodes.insert(assignedNodeId);
 
-//Ptr<Socket> senderSocket = Socket::CreateSocket(assignedNode, UdpSocketFactory::GetTypeId());
-if (!senderSocket) {
-NS_LOG_ERROR("Failed to create sender socket for SAR Node " << assignedNodeId);
-return;
-}
+// // 7) Log the assignment
+// //double timestamp = Simulator::Now().GetSeconds();
+// //Ipv4Address rescuerIp = assignedNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+// // std::cout << "[AssignRescuer] &rescueAssignmentLogFile=" << (void*)&rescueAssignmentLogFile
+// //           << " is_open=" << rescueAssignmentLogFile.is_open()
+// //           << " fail=" << rescueAssignmentLogFile.fail()
+// //           << "\n";
 
-// 9) Start the convergence process
-ConvergeOnCivilian(assignedNode, civilianNode, senderSocket, convergencePort);
-}
+//         //   std::cout << "[OPEN] rescue addr=" << (void*)&rescueAssignmentLogFile
+//         //   << " recv addr=" << (void*)&receivedAssignmentsLogFile << "\n";
+
+
+
+// // rescueAssignmentLogFile << timestamp << "," << civilianId << "," << assignedNodeId << "( BASE ASSIGNMENET),"
+// //              << rescuerIp << "," // Include rescuer's IP address
+// //              << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z << "\n";
+// // rescueAssignmentLogFile.flush();
+
+
+
+// // If this assignment was triggered by the base, broadcast the assignment.
+
+// for (uint32_t i = 0; i < sarNodes.GetN(); ++i) {
+// Ptr<Node> sarNode = sarNodes.Get(i);
+// if (!sarNode) continue;
+
+// // Create a new assignment packet for each SAR node
+// RescueAssignmentData assignmentData = {civilianId, assignedNodeId, 
+//                                     civilianPosition.x, civilianPosition.y, civilianPosition.z};
+// Ptr<Packet> packet = Create<Packet>((uint8_t*)&assignmentData, sizeof(assignmentData));
+
+// // Generate a unique communication ID for each SAR node
+// uint32_t communicationId = 20000 + sarNode->GetId();
+// CommunicationIdTag commIdTag(communicationId);
+// packet->AddPacketTag(commIdTag);
+
+// // Send the packet to the current SAR node
+// Ipv4Address receiverAddress = sarNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+// baseBroadcastSocket->SetIpTos(tos);
+// InetSocketAddress remote = InetSocketAddress(receiverAddress, assignmentPort);
+// NodeIdTag tag;
+// tag.SetNodeId(baseBroadcastSocket->GetNode()->GetId());
+// packet->AddPacketTag(tag);
+// baseBroadcastSocket->SendTo(packet, 0, remote);
+
+// // Start a communication session for the current SAR node
+// StartCommunicationSession(
+//  communicationId,
+//  baseBroadcastSocket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal(),
+//  receiverAddress,
+//  "Rescue Assignment Broadcast",
+//  Simulator::Now().GetSeconds(),
+//  "UDP",
+//  assignmentPort
+// );
+
+// // Log packet event for the current SAR node
+// uint32_t packetId = packet->GetUid();
+// double sendTime = Simulator::Now().GetSeconds();
+// sendTimestamps[packetId] = sendTime;
+
+// LogPacketEvent(
+//  baseBroadcastSocket,
+//  baseBroadcastSocket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal(),
+//  receiverAddress,
+//  packetId,
+//  0.0,
+//  0.0,
+//  packet->GetSize(),
+//  assignmentPort,
+//  "Rescue Assignment Packet Broadcast SENT",
+//  communicationId,"TX"
+// );
+// }
+
+
+// // 8) Create a sender socket for the assigned node
+//    // uint8_t tos=0x60;
+
+//         Ptr<Socket> senderSocket =GetCachedUdpSocket(assignedNode, tos);
+
+// //Ptr<Socket> senderSocket = Socket::CreateSocket(assignedNode, UdpSocketFactory::GetTypeId());
+// if (!senderSocket) {
+// NS_LOG_ERROR("Failed to create sender socket for SAR Node " << assignedNodeId);
+// return;
+// }
+// //senderSocket->Bind();
+
+// // 9) Start the convergence process
+
+// Simulator::Schedule(MicroSeconds(3), &ConvergeOnCivilian,
+//                     assignedNode, civilianNode, senderSocket, convergencePort);
+
+// //ConvergeOnCivilian(assignedNode, civilianNode, senderSocket, convergencePort);
+// }
 void TryAssignPendingCivilians()
 {
-    for (auto it = pendingCivilians.begin(); it != pendingCivilians.end(); )
+    // Defensive guard: never run a nested pending-assignment pass.
+    static bool isProcessing = false;
+    if (isProcessing)
     {
-        uint32_t civId = *it;
+        return;
+    }
+    isProcessing = true;
+    struct ProcessingGuard
+    {
+        bool& flag;
+        ~ProcessingGuard() { flag = false; }
+    } guard{isProcessing};
+
+    // Preserve the existing container traversal order without keeping
+    // iterators into a container that assignment/completion may change.
+    const auto snapshot = pendingCivilians;
+    for (uint32_t civId : snapshot)
+    {
+        if (pendingCivilians.find(civId) == pendingCivilians.end())
+        {
+            continue;
+        }
+        if (IsCivilianAlreadySafeForAssignment(civId) ||
+            rescueAssignments.find(civId) != rescueAssignments.end() ||
+            civId >= NodeList::GetNNodes())
+        {
+            pendingCivilians.erase(civId);
+            continue;
+        }
 
         Ptr<Node> civilianNode = NodeList::GetNode(civId);
         if (!civilianNode)
         {
-            it = pendingCivilians.erase(it);
+            pendingCivilians.erase(civId);
             continue;
         }
 
-        // Log that this civilian is currently pending
         pendingAssignmentCsv << Simulator::Now().GetSeconds() << ","
                              << civId << ",PENDING\n";
         pendingAssignmentCsv.flush();
 
-        size_t before = rescueAssignments.size();
-
-        AssignRescuer(
-            civId,
-            civilianNode,
-            sarNodes,
-            baseBroadcastSocket,
-            assignmentPort
-        );
-
-        // If assignment succeeded
-        if (rescueAssignments.size() > before)
-        {
-            pendingAssignmentCsv << Simulator::Now().GetSeconds() << ","
-                                 << civId << ",ASSIGNED\n";
-            pendingAssignmentCsv.flush();
-
-            it = pendingCivilians.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
+        // AssignRescuer removes this civilian from pending at assignment
+        // commit. If no rescuer is available, the civilian remains pending.
+        AssignRescuer(civId, civilianNode, sarNodes,
+                      baseBroadcastSocket, assignmentPort);
     }
 }
 void AssignRescuerBySelf(uint32_t civilianId, uint32_t sarNodeId, Ptr<Node> baseNode) {
-    // 1) If the civilian is already assigned, exit
-    if (rescueAssignments.find(civilianId) != rescueAssignments.end()) return;
+    // Never self-assign a safe civilian or duplicate an active assignment.
+    if (IsCivilianAlreadySafeForAssignment(civilianId) ||
+        rescueAssignments.find(civilianId) != rescueAssignments.end()) {
+        pendingCivilians.erase(civilianId);
+        return;
+    }
+    if (civilianId >= NodeList::GetNNodes() || sarNodeId >= NodeList::GetNNodes()) return;
 
     // 2) If the SAR is already assigned, exit
     if (assignedSarNodes.find(sarNodeId) != assignedSarNodes.end()) return;
@@ -572,32 +770,35 @@ void AssignRescuerBySelf(uint32_t civilianId, uint32_t sarNodeId, Ptr<Node> base
         NS_LOG_ERROR("No MobilityModel found for Civilian Node " << civilianId);
         return;
     }
-    Vector civilianPosition = civilianMobility->GetPosition();
+   // Vector civilianPosition = civilianMobility->GetPosition();
 
     // 5) Record the assignment
     rescueAssignments[civilianId] = sarNodeId;
     assignedSarNodes.insert(sarNodeId);
+    CompletePendingAssignment(civilianId);
 
     // 6) Log the assignment
-    double timestamp = Simulator::Now().GetSeconds();
-    Ipv4Address rescuerIp = sarNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
-//   std::cout << "[OPEN] rescue addr=" << (void*)&rescueAssignmentLogFile
+//     double timestamp = Simulator::Now().GetSeconds();
+//     Ipv4Address rescuerIp = sarNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+// //   std::cout << "[OPEN] rescue addr=" << (void*)&rescueAssignmentLogFile
 //           << " recv addr=" << (void*)&receivedAssignmentsLogFile << "\n";
 
-    rescueAssignmentLogFile << timestamp << "," << civilianId << "," << sarNodeId << "( SELF ASSIGNMENT),"
-                            << rescuerIp << "," 
-                            << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z << "\n";
-   rescueAssignmentLogFile.flush();
+//     rescueAssignmentLogFile << timestamp << "," << civilianId << "," << sarNodeId << "( SELF ASSIGNMENT),"
+//                             << rescuerIp << "," 
+//                             << civilianPosition.x << "," << civilianPosition.y << "," << civilianPosition.z << "\n";
+//    rescueAssignmentLogFile.flush();
 
     // 7) Create a sender socket
-        uint8_t tos=0x60;
+        //uint8_t tos=0x60;
 
-        Ptr<Socket> senderSocket =GetCachedUdpSocket(sarNode, tos);
+       // Ptr<Socket> senderSocket =GetCachedUdpSocket(sarNode, tos);
 
+   Ptr<Socket> senderSocket = Socket::CreateSocket(sarNode, UdpSocketFactory::GetTypeId());
     if (!senderSocket) {
         NS_LOG_ERROR("Failed to create sender socket for SAR Node " << sarNodeId);
         return;
     }
+  //  senderSocket->Bind();
 
     // ✅ 8) Set the global base node if needed (optional safety)
     g_baseNode = baseNode;
@@ -610,7 +811,10 @@ void CheckAssignmentStatusAndPossiblySelfAssign(
     uint32_t civilianNodeId,
     Ptr<Node> baseNode
 ) {
-    if (rescueAssignments.find(civilianNodeId) != rescueAssignments.end())
+    if (IsCivilianAlreadySafeForAssignment(civilianNodeId) ||
+        rescueAssignments.find(civilianNodeId) != rescueAssignments.end())
+        return;
+    if (civilianNodeId >= NodeList::GetNNodes() || sarNodeId >= NodeList::GetNNodes())
         return;
 
     Ptr<Node> sarNode = NodeList::GetNode(sarNodeId);
@@ -632,6 +836,7 @@ void CheckAssignmentStatusAndPossiblySelfAssign(
         return;
     }
 
+    //Ptr<Node> sarNode = NodeList::GetNode(sarNodeId);
     Ptr<Node> civilianNode = NodeList::GetNode(civilianNodeId);
     if (!sarNode || !civilianNode) return;
 
@@ -642,13 +847,17 @@ void CheckAssignmentStatusAndPossiblySelfAssign(
 }
 void LogConvergenceUpdate(Ptr<Socket> socket)
 {
-    Vector basePosition = g_baseNode->GetObject<MobilityModel>()->GetPosition();
+   // Vector basePosition = g_baseNode->GetObject<MobilityModel>()->GetPosition();
 
     Address from;
     Ptr<Packet> packet;
 
     while ((packet = socket->RecvFrom(from)))
     {
+        // std::cout << "[RX_HANDLER] t=" << Simulator::Now().GetSeconds()
+        //   << " node=" << socket->GetNode()->GetId()
+        //   << " handler=LOG CONVERGENCE" << std::endl;
+
         uint32_t packetId = packet->GetUid();
         double receiveTime = Simulator::Now().GetSeconds();
 
@@ -682,22 +891,24 @@ void LogConvergenceUpdate(Ptr<Socket> socket)
 
         packet->CopyData(reinterpret_cast<uint8_t*>(&receivedUpdate), sizeof(receivedUpdate));
 
-        InetSocketAddress senderAddress = InetSocketAddress::ConvertFrom(from);
-        Ipv4Address senderIp = senderAddress.GetIpv4();
+         InetSocketAddress senderAddress = InetSocketAddress::ConvertFrom(from);
+         Ipv4Address senderIp = senderAddress.GetIpv4();
 
-        double currentTime = Simulator::Now().GetSeconds();
-        convergenceLogFile << currentTime << "," << senderIp << ","
-                           << receivedUpdate.sarNodeId << "," << receivedUpdate.civilianId << ","
-                           << receivedUpdate.sarX << "," << receivedUpdate.sarY << "," << receivedUpdate.sarZ << ","
-                           << receivedUpdate.civilianX << "," << receivedUpdate.civilianY << "," << receivedUpdate.civilianZ << ","
-                           << basePosition.x << "," << basePosition.y << "," << basePosition.z << ","
-                           << receivedUpdate.distance << "," << receivedUpdate.distanceToBase << ","
-                           << "Convergence update sent to base"
-                           << "\n";
-        convergenceLogFile.flush();
+        // //double currentTime = Simulator::Now().GetSeconds();
+        // convergenceLogFile << currentTime << "," << senderIp << ","
+        //                    << receivedUpdate.sarNodeId << "," << receivedUpdate.civilianId << ","
+        //                    << receivedUpdate.sarX << "," << receivedUpdate.sarY << "," << receivedUpdate.sarZ << ","
+        //                    << receivedUpdate.civilianX << "," << receivedUpdate.civilianY << "," << receivedUpdate.civilianZ << ","
+        //                    << basePosition.x << "," << basePosition.y << "," << basePosition.z << ","
+        //                    << receivedUpdate.distance << "," << receivedUpdate.distanceToBase << ","
+        //                    << "Convergence update sent to base"
+        //                    << "\n";
+        // convergenceLogFile.flush();
 
-        // delay lookup + erase to prevent RAM growth
+        // ✅ delay lookup + erase to prevent RAM growth
         double delay = 0.0;
+
+        
         auto itTs = sendTimestamps.find(packetId);
         if (itTs != sendTimestamps.end())
         {
@@ -726,10 +937,99 @@ void LogConvergenceUpdate(Ptr<Socket> socket)
     }
 }
 
+// void LogConvergenceUpdate(Ptr<Socket> socket) {
+//     //NS_LOG_INFO("LogConvergenceUpdate called");
+//         Vector basePosition = g_baseNode->GetObject<MobilityModel>()->GetPosition();
+
+//     Address from;
+//     Ptr<Packet> packet = socket->RecvFrom(from);
+
+//     // Extract packet ID and receive time
+//     uint32_t packetId = packet->GetUid();
+//     double receiveTime = Simulator::Now().GetSeconds();
+
+//     // Retrieve the CommunicationIdTag
+//     CommunicationIdTag commIdTag;
+//     uint32_t commId = 0;
+//     if (packet->PeekPacketTag(commIdTag)) {
+//         commId = commIdTag.GetCommunicationId();
+//     }
+
+//     // Define the structure of the received data
+//    // Define the structure of the received data
+//     struct ConvergenceUpdate {
+//         uint32_t sarNodeId;
+//         uint32_t civilianId;
+//         double timestamp;
+//         char status[16];
+//         double sarX;
+//         double sarY;
+//         double sarZ;
+//         double civilianX;
+//         double civilianY;
+//         double civilianZ;
+//         double distanceToBase;
+//         double distance;
+//     } receivedUpdate;
+
+//     // Parse the incoming packet into the ConvergenceUpdate structure
+//     packet->CopyData(reinterpret_cast<uint8_t*>(&receivedUpdate), sizeof(receivedUpdate));
+
+//     // Retrieve sender's IP address
+//     InetSocketAddress senderAddress = InetSocketAddress::ConvertFrom(from);
+//     Ipv4Address senderIp = senderAddress.GetIpv4();
+
+//     //    double distanceToCivilian = std::sqrt(
+//     //     std::pow(receivedUpdate.sarX  - receivedUpdate.civilianX, 2) +
+//     //     std::pow(receivedUpdate.sarY - receivedUpdate.civilianY , 2) +
+//     //     std::pow(receivedUpdate.sarZ - receivedUpdate.civilianZ, 2)
+//     // );
+//     // Log the update in the desired format
+//     double currentTime = Simulator::Now().GetSeconds();
+
+//     convergenceLogFile << currentTime << "," << senderIp << ","
+//                        << receivedUpdate.sarNodeId << "," << receivedUpdate.civilianId << ","
+//                        << receivedUpdate.sarX << "," << receivedUpdate.sarY << "," << receivedUpdate.sarZ << ","
+//                        << receivedUpdate.civilianX << "," << receivedUpdate.civilianY << "," << receivedUpdate.civilianZ << ","
+//                        <<basePosition.x << "," << basePosition.y << "," << basePosition.z << ","
+//                        << receivedUpdate.distance<<","<< receivedUpdate.distanceToBase <<","<< "Convergence update sent to base" << "\n";
+//     convergenceLogFile.flush();
+
+//     // Calculate delay between sending and receiving
+//     double delay = 0.0;
+//     if (sendTimestamps.count(packetId) > 0) {
+//         delay = receiveTime - sendTimestamps[packetId];
+//     }
+
+//     // Log the packet event with updated delay and throughput
+//     LogPacketEvent(
+//         socket,
+//         socket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal(), // Destination IP
+//         senderIp,                                                         // Source IP
+//         packetId,
+//         delay,
+//         (delay > 0) ? (packet->GetSize() * 8 / delay) : 0.0,              // Throughput in bits/sec
+//         packet->GetSize(),
+//         convergencePort,
+//         "Convergence Update Received",
+//         commId
+//     );
+
+//     // Print the update to the console for debugging
+//     // std::cout << "Base Station received convergence update from Node " << receivedUpdate.sarNodeId
+//     //           << " about Civilian " << receivedUpdate.civilianId
+//     //           << " at Position (" << receivedUpdate.sarX << ", " << receivedUpdate.sarY << ", " << receivedUpdate.sarZ
+//     //           << ") with Distance to Base: " << receivedUpdate.distanceToBase << "."
+//     //           << std::endl;
+// }
 
 void ReceiveBroadcastAttachment(Ptr<Socket> socket) {
     Address from;
     Ptr<Packet> packet = socket->RecvFrom(from);
+    // std::cout << "[RX_HANDLER] t=" << Simulator::Now().GetSeconds()
+    //       << " node=" << socket->GetNode()->GetId()
+    //       << " handler=RECIEVE BROADCAST ATTACHMENET" << std::endl;
+
 
      // ... you call packet = socket->RecvFrom(...)
     uint32_t packetId = packet->GetUid();
@@ -749,6 +1049,11 @@ void ReceiveBroadcastAttachment(Ptr<Socket> socket) {
     } status;
 
     packet->CopyData((uint8_t *)&status, sizeof(status));
+    //InetSocketAddress senderAddress = InetSocketAddress::ConvertFrom(from);
+   // Ipv4Address senderIp = senderAddress.GetIpv4();
+    //uint32_t packetId = packet->GetUid();
+   // double receiveTime = Simulator::Now().GetSeconds();
+
     double delay = 0.0;
     auto itTs = sendTimestamps.find(packetId);
     if (itTs != sendTimestamps.end())
@@ -763,7 +1068,7 @@ if (delay > 1e-9)
     throughput = (packet->GetSize() * 8.0) / delay;
 }
 
-    //  LogPacketEvent again, but now filling in the actual delay & throughput
+    // Then call LogPacketEvent again, but now filling in the actual delay & throughput
     LogPacketEvent(
         socket,
         socket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal(),
@@ -784,14 +1089,18 @@ if (delay > 1e-9)
 void ReceiveAssignment(Ptr<Socket> socket) {
     Address from;
     Ptr<Packet> packet = socket->RecvFrom(from);
+    // std::cout << "[RX_HANDLER] t=" << Simulator::Now().GetSeconds()
+    //       << " node=" << socket->GetNode()->GetId()
+    //       << " handler=pRECIEVE ASSIGNMNET" << std::endl;
+
     InetSocketAddress address = InetSocketAddress::ConvertFrom(from);
 
 
      // Retrieve the source address of the packet
-    InetSocketAddress source = InetSocketAddress::ConvertFrom(from);
+   // InetSocketAddress source = InetSocketAddress::ConvertFrom(from);
     Ipv4Address receiverAddress = socket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
 
-    Ipv4Address sourceAddress = source.GetIpv4();
+   // Ipv4Address sourceAddress = source.GetIpv4();
     uint32_t packetId = packet->GetUid();
     double receiveTime = Simulator::Now().GetSeconds();
 
@@ -845,21 +1154,21 @@ void ReceiveAssignment(Ptr<Socket> socket) {
                 //  << ", " << data.civilianZ << ") from Base Station at " << sourceAddress);
 
     // Log to file
-   if (receivedAssignmentsLogFile.is_open()) {
+  // if (receivedAssignmentsLogFile.is_open()) {
     // Get the IP address of the assigned node
-    Ptr<Node> assignedNode = NodeList::GetNode(data.assignedNodeId);
-    Ipv4Address assignedNodeIp = assignedNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
+    // Ptr<Node> assignedNode = NodeList::GetNode(data.assignedNodeId);
+    // Ipv4Address assignedNodeIp = assignedNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal();
 
-    receivedAssignmentsLogFile << Simulator::Now().GetSeconds() << ","  // Simulation time
-                               << socket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << "," // Logs IP address of receiving node
-                               << sourceAddress << ","                 // Source/Base Station Address
-                               << data.civilianId << ","               // Civilian ID
-                               << data.assignedNodeId << ","           // Assigned SAR Node ID (Node Number)
-                               << assignedNodeIp << ","                // Assigned SAR Node's IP address
-                               << data.civilianX << ","                // Civilian X position
-                               << data.civilianY << ","                // Civilian Y position
-                               << data.civilianZ << "\n";              // Civilian Z position
-    receivedAssignmentsLogFile.flush();  // Force write to disk
+    // receivedAssignmentsLogFile << Simulator::Now().GetSeconds() << ","  // Simulation time
+    //                            << socket->GetNode()->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() << "," // Logs IP address of receiving node
+    //                            << sourceAddress << ","                 // Source/Base Station Address
+    //                            << data.civilianId << ","               // Civilian ID
+    //                            << data.assignedNodeId << ","           // Assigned SAR Node ID (Node Number)
+    //                            << assignedNodeIp << ","                // Assigned SAR Node's IP address
+    //                            << data.civilianX << ","                // Civilian X position
+    //                            << data.civilianY << ","                // Civilian Y position
+    //                            << data.civilianZ << "\n";              // Civilian Z position
+    // receivedAssignmentsLogFile.flush();  // Force write to disk
 
 
     // Log the packet event
@@ -867,6 +1176,6 @@ void ReceiveAssignment(Ptr<Socket> socket) {
 
     // Clean up after processing
     sendTimestamps.erase(packetId);
-}
+//}
 
 }
